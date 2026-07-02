@@ -1,278 +1,336 @@
+"""PyQt6 tool for comparing two simultaneous ring-cavity resonances."""
+
+from __future__ import annotations
+
 import sys
+from dataclasses import dataclass
 
 import numpy as np
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QDoubleSpinBox,
+    QFormLayout,
     QGridLayout,
-    QHBoxLayout,
+    QGroupBox,
     QLabel,
+    QMainWindow,
     QPushButton,
+    QSizePolicy,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
 
 
-SPEED_OF_LIGHT = 299792458.0
+SPEED_OF_LIGHT_M_S = 299_792_458.0
 
 
-def ring_cavity_transmission(
-    wavelength,
-    L,
-    T1,
-    T2,
-    T3,
-    T4,
-    loss1=0.0,
-    loss2=0.0,
-    loss3=0.0,
-    loss4=0.0,
-    extra_roundtrip_loss=0.0,
-    n_eff=1.0,
-    normalize=True,
-):
+@dataclass(frozen=True)
+class CavityParams:
+    transmission1: float
+    transmission2: float
+    lambda1_nm: float
+    lambda2_nm: float
+    length_m: float
+    scan_range_um: float
+    points: int
+
+
+def cavity_response(length_m: np.ndarray, wavelength_nm: float, transmission: float) -> np.ndarray:
+    """Normalized Airy transmission for a lossless ring cavity.
+
+    The round-trip field reflectivity ``r = sqrt(1 - T)`` sets the linewidth, and
+    the response is the standard cavity transmission lineshape
+
+        (1 - r)^2 / |1 - r exp(i phi)|^2 = 1 / (1 + F_coef sin^2(phi/2)),
+
+    which peaks at 1 on resonance and stays in ``(0, 1]`` (energy-conserving). The
+    transmission ``T`` enters only through ``r`` (i.e. through the linewidth).
     """
-    Transmission spectrum of a 4-mirror travelling-wave cavity.
 
-    Parameters
-    ----------
-    wavelength : float or array_like
-        Vacuum wavelength(s) in meters.
-    L : float
-        Round-trip geometric length of the cavity in meters.
-    T1, T2, T3, T4 : float
-        Power transmissions of the 4 mirrors.
-    loss1, loss2, loss3, loss4 : float
-        Additional power loss per mirror (scatter/absorption).
-    extra_roundtrip_loss : float
-        Additional lumped round-trip power loss.
-    n_eff : float
-        Effective refractive index along the round trip.
-    normalize : bool
-        If True, return transmission normalized to its maximum.
+    round_trip_field = float(np.sqrt(np.clip(1.0 - transmission, 0.0, 1.0)))
+    phase = 2.0 * np.pi * length_m / (wavelength_nm * 1e-9)
+    denominator = 1.0 + round_trip_field**2 - 2.0 * round_trip_field * np.cos(phase)
+    numerator = (1.0 - round_trip_field) ** 2
 
-    Returns
-    -------
-    T : ndarray
-        Power transmission spectrum.
-    """
-    wavelength = np.asarray(wavelength, dtype=float)
-
-    # Power reflectivities
-    R1 = 1.0 - T1 - loss1
-    R2 = 1.0 - T2 - loss2
-    R3 = 1.0 - T3 - loss3
-    R4 = 1.0 - T4 - loss4
-
-    if np.any(np.array([R1, R2, R3, R4]) < 0):
-        raise ValueError("Some mirror reflectivities became negative. Check T_i + loss_i <= 1.")
-
-    # Total round-trip power reflectivity
-    R_rt = R1 * R2 * R3 * R4 * (1.0 - extra_roundtrip_loss)
-
-    if R_rt < 0 or R_rt > 1:
-        raise ValueError("Round-trip power reflectivity must lie between 0 and 1.")
-
-    # Round-trip optical phase
-    L_opt = n_eff * L
-    phi_rt = 2.0 * np.pi * L_opt / wavelength
-
-    # Choose input/output couplers as mirror 1 and mirror 2
-    # You can change this depending on your cavity geometry.
-    T = (T1 * T2) / (1.0 + R_rt - 2.0 * np.sqrt(R_rt) * np.cos(phi_rt))
-
-    if normalize:
-        Tmax = np.max(T)
-        if Tmax > 0:
-            T = T / Tmax
-
-    return T
+    return numerator / np.maximum(denominator, np.finfo(float).eps)
 
 
-def transmission_vs_detuning_fsr(wavelength_center_m, L, num_fsr, T1, T2, T3, T4):
-    if L <= 0:
-        raise ValueError("L must be > 0.")
-    if num_fsr <= 0:
-        raise ValueError("numFSR must be > 0.")
-    if wavelength_center_m <= 0:
-        raise ValueError("Wavelength must be > 0.")
+def cavity_kappa_rad_s(length_m: float, transmission: float) -> float:
+    """Return the exact Airy FWHM linewidth as angular frequency."""
 
-    points_per_fsr = 1200
-    npts = max(2001, int(num_fsr * points_per_fsr) + 1)
-    detuning_fsr = np.linspace(-0.5 * num_fsr, 0.5 * num_fsr, npts)
+    finesse = cavity_finesse(transmission)
+    if length_m <= 0.0 or not np.isfinite(finesse):
+        return np.nan
 
-    fsr_hz = SPEED_OF_LIGHT / L
-    nu0 = SPEED_OF_LIGHT / wavelength_center_m
-    nu_scan = nu0 + detuning_fsr * fsr_hz
-    if np.any(nu_scan <= 0):
-        raise ValueError("Frequency scan crossed zero. Reduce numFSR or increase wavelength.")
-
-    wavelength_scan = SPEED_OF_LIGHT / nu_scan
-    transmission = ring_cavity_transmission(
-        wavelength_scan,
-        L,
-        T1,
-        T2,
-        T3,
-        T4,
-        normalize=True,
-    )
-    return detuning_fsr, transmission
+    linewidth_hz = SPEED_OF_LIGHT_M_S / length_m / finesse
+    return 2.0 * np.pi * linewidth_hz
 
 
-class CavityGui(QWidget):
-    def __init__(self):
+def cavity_finesse(transmission: float) -> float:
+    """Return the exact Airy finesse for a single-ended lossless cavity."""
+
+    round_trip_field = float(np.sqrt(np.clip(1.0 - transmission, 0.0, 1.0)))
+    if round_trip_field <= 0.0:
+        return np.nan
+
+    half_width_argument = (1.0 - round_trip_field) / (2.0 * np.sqrt(round_trip_field))
+    if half_width_argument >= 1.0:
+        return np.nan
+
+    return np.pi / (2.0 * np.arcsin(half_width_argument))
+
+
+def nearest_resonance_offset_um(length_m: float, wavelength_nm: float) -> float:
+    """Length offset (um) from L to the nearest resonance (phi = 2 pi n, i.e. L = n lambda)."""
+
+    lam_m = wavelength_nm * 1e-9
+    n = round(length_m / lam_m)
+    return (n * lam_m - length_m) * 1e6
+
+
+def format_scalar(value: float) -> str:
+    if not np.isfinite(value):
+        return "n/a"
+    return f"{value:.6g}"
+
+
+def format_rate(rad_per_s: float) -> str:
+    if not np.isfinite(rad_per_s):
+        return "n/a"
+
+    hz = rad_per_s / (2.0 * np.pi)
+    abs_hz = abs(hz)
+    if abs_hz >= 1e9:
+        return f"{hz / 1e9:.6g} GHz"
+    if abs_hz >= 1e6:
+        return f"{hz / 1e6:.6g} MHz"
+    if abs_hz >= 1e3:
+        return f"{hz / 1e3:.6g} kHz"
+    return f"{hz:.6g} Hz"
+
+
+class LabeledDoubleSpinBox(QDoubleSpinBox):
+    def __init__(
+        self,
+        minimum: float,
+        maximum: float,
+        value: float,
+        step: float,
+        decimals: int,
+        suffix: str = "",
+    ) -> None:
         super().__init__()
-        self.setWindowTitle("4-Mirror Traveling-Wave Cavity")
-        self._build_ui()
+        self.setRange(minimum, maximum)
+        self.setDecimals(decimals)
+        self.setValue(value)
+        self.setSingleStep(step)
+        self.setSuffix(suffix)
+        self.setKeyboardTracking(False)
+        self.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+
+class SimultaneousCavityWindow(QMainWindow):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("Simultaneously Resonant Cavity")
+        self.resize(1120, 760)
+
+        self.figure = Figure(figsize=(8.0, 6.0), constrained_layout=True)
+        self.canvas = FigureCanvas(self.figure)
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        self.ax_transmission = self.figure.add_subplot(2, 1, 1)
+        self.ax_overlap = self.figure.add_subplot(2, 1, 2, sharex=self.ax_transmission)
+
+        controls = self._build_controls()
+        summary = self._build_summary()
+
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.addWidget(controls)
+        left_layout.addWidget(summary)
+        left_layout.addStretch(1)
+
+        root = QWidget()
+        root_layout = QGridLayout(root)
+        root_layout.addWidget(left_panel, 0, 0)
+        root_layout.addWidget(self.canvas, 0, 1)
+        root_layout.setColumnStretch(0, 0)
+        root_layout.setColumnStretch(1, 1)
+        self.setCentralWidget(root)
+
+        self._connect_updates()
         self.update_plot()
 
-    def _build_ui(self):
-        main_layout = QVBoxLayout()
-        form_layout = QGridLayout()
+    def _build_controls(self) -> QGroupBox:
+        group = QGroupBox("Inputs")
+        form = QFormLayout(group)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
-        self.t1_input = self._make_spinbox(
-            minimum=0.0, maximum=1.0, value=0.01, decimals=6, step=0.001
+        self.transmission_lambda1 = LabeledDoubleSpinBox(0.0, 1.0, 0.1, 0.001, 6)
+        self.transmission_lambda2 = LabeledDoubleSpinBox(0.0, 1.0, 0.05, 0.001, 6)
+        self.lambda1 = LabeledDoubleSpinBox(1.0, 100000.0, 780.2415, 0.01, 4, " nm")
+        self.lambda2 = LabeledDoubleSpinBox(1.0, 100000.0, 479.9970, 0.01, 4, " nm")
+        self.length = LabeledDoubleSpinBox(1e-7, 1.0e7, 50.0, 0.005, 6, " cm")
+        self.scan_range = LabeledDoubleSpinBox(0.000001, 1.0e6, 2.0, 0.01, 6, " um")
+
+        self.points = QSpinBox()
+        self.points.setRange(200, 10000000)
+        self.points.setValue(1000000)
+        self.points.setSingleStep(10000)
+        self.points.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.points.setKeyboardTracking(False)
+
+        self.reset_button = QPushButton("Reset")
+        self.reset_button.clicked.connect(self.reset_defaults)
+
+        form.addRow("lambda 1", self.lambda1)
+        form.addRow("lambda 1 mirror T", self.transmission_lambda1)
+        form.addRow("lambda 2", self.lambda2)
+        form.addRow("lambda 2 mirror T", self.transmission_lambda2)
+        form.addRow("L", self.length)
+        form.addRow("Scan range", self.scan_range)
+        form.addRow("Samples", self.points)
+        form.addRow(self.reset_button)
+
+        group.setMaximumWidth(300)
+        return group
+
+    def _build_summary(self) -> QGroupBox:
+        group = QGroupBox("Readout")
+        layout = QVBoxLayout(group)
+        self.summary_label = QLabel()
+        self.summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.summary_label.setWordWrap(True)
+        layout.addWidget(self.summary_label)
+        group.setMaximumWidth(300)
+        return group
+
+    def _connect_updates(self) -> None:
+        controls = (
+            self.transmission_lambda1,
+            self.transmission_lambda2,
+            self.lambda1,
+            self.lambda2,
+            self.length,
+            self.scan_range,
+            self.points,
         )
-        self.t2_input = self._make_spinbox(
-            minimum=0.0, maximum=1.0, value=0.01, decimals=6, step=0.001
-        )
-        self.t3_input = self._make_spinbox(
-            minimum=0.0, maximum=1.0, value=0.01, decimals=6, step=0.001
-        )
-        self.t4_input = self._make_spinbox(
-            minimum=0.0, maximum=1.0, value=0.01, decimals=6, step=0.001
-        )
-        self.length_coarse_input = self._make_spinbox(
-            minimum=1e-9, maximum=1e6, value=0.20, decimals=6, step=0.001
-        )
-        self.length_coarse_input.setSuffix(" m")
-        self.length_fine_nm_input = self._make_spinbox(
-            minimum=-1e9, maximum=1e9, value=0.0, decimals=0, step=1.0
-        )
-        self.length_fine_nm_input.setSuffix(" nm")
-        self.numfsr_input = self._make_spinbox(
-            minimum=0.01, maximum=100.0, value=3.0, decimals=3, step=0.1
-        )
-        self.lambda1_input = self._make_spinbox(
-            minimum=1.0, maximum=1e6, value=780.0, decimals=3, step=0.001
-        )
-        self.lambda2_input = self._make_spinbox(
-            minimum=1.0, maximum=1e6, value=480.0, decimals=3, step=0.001
+        for control in controls:
+            control.valueChanged.connect(self.update_plot)
+
+    def reset_defaults(self) -> None:
+        self.transmission_lambda1.setValue(0.1)
+        self.transmission_lambda2.setValue(0.05)
+        self.lambda1.setValue(780.2415)
+        self.lambda2.setValue(479.9970)
+        self.length.setValue(50.0)
+        self.scan_range.setValue(2.0)
+        self.points.setValue(1000000)
+
+    def params(self) -> CavityParams:
+        return CavityParams(
+            transmission1=self.transmission_lambda1.value(),
+            transmission2=self.transmission_lambda2.value(),
+            lambda1_nm=self.lambda1.value(),
+            lambda2_nm=self.lambda2.value(),
+            length_m=self.length.value() * 1e-2,
+            scan_range_um=self.scan_range.value(),
+            points=self.points.value(),
         )
 
-        form_layout.addWidget(QLabel("T1:"), 0, 0)
-        form_layout.addWidget(self.t1_input, 0, 1)
-        form_layout.addWidget(QLabel("T2:"), 1, 0)
-        form_layout.addWidget(self.t2_input, 1, 1)
-        form_layout.addWidget(QLabel("T3:"), 2, 0)
-        form_layout.addWidget(self.t3_input, 2, 1)
-        form_layout.addWidget(QLabel("T4:"), 3, 0)
-        form_layout.addWidget(self.t4_input, 3, 1)
-        form_layout.addWidget(QLabel("L coarse (m):"), 4, 0)
-        form_layout.addWidget(self.length_coarse_input, 4, 1)
-        form_layout.addWidget(QLabel("L fine (nm):"), 5, 0)
-        form_layout.addWidget(self.length_fine_nm_input, 5, 1)
-        form_layout.addWidget(QLabel("numFSR:"), 6, 0)
-        form_layout.addWidget(self.numfsr_input, 6, 1)
-        form_layout.addWidget(QLabel("lambda 1 (nm):"), 0, 2)
-        form_layout.addWidget(self.lambda1_input, 0, 3)
-        form_layout.addWidget(QLabel("lambda 2 (nm):"), 1, 2)
-        form_layout.addWidget(self.lambda2_input, 1, 3)
+    def update_plot(self) -> None:
+        params = self.params()
+        offsets_um = np.linspace(-0.5 * params.scan_range_um, 0.5 * params.scan_range_um, params.points)
+        lengths_m = params.length_m + offsets_um * 1e-6
 
-        self.plot_button = QPushButton("Plot")
-        self.plot_button.clicked.connect(self.update_plot)
-        self._connect_auto_update()
+        response1 = cavity_response(lengths_m, params.lambda1_nm, params.transmission1)
+        response2 = cavity_response(lengths_m, params.lambda2_nm, params.transmission2)
 
-        button_row = QHBoxLayout()
-        button_row.addWidget(self.plot_button)
-        button_row.addStretch(1)
+        norm1 = normalize(response1)
+        norm2 = normalize(response2)
+        overlap = norm1 * norm2
+        best_index = int(np.argmax(overlap))
 
-        self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #b00020;")
+        self.ax_transmission.clear()
+        self.ax_overlap.clear()
 
-        self.figure = Figure(figsize=(10, 4), tight_layout=True)
-        self.canvas = FigureCanvas(self.figure)
+        self.ax_transmission.plot(offsets_um, response1, label=f"lambda 1 = {params.lambda1_nm:g} nm", color="#2563eb")
+        self.ax_transmission.plot(offsets_um, response2, label=f"lambda 2 = {params.lambda2_nm:g} nm", color="#c2410c")
+        self.ax_transmission.axvline(offsets_um[best_index], color="#111827", alpha=0.35, linewidth=1.0)
+        self.ax_transmission.set_ylabel("Cavity transmission (norm.)")
+        self.ax_transmission.grid(True, alpha=0.25)
+        self.ax_transmission.legend(loc="upper right")
 
-        main_layout.addLayout(form_layout)
-        main_layout.addLayout(button_row)
-        main_layout.addWidget(self.status_label)
-        main_layout.addWidget(self.canvas)
-        self.setLayout(main_layout)
+        self.ax_overlap.plot(offsets_um, overlap, color="#15803d", label="Normalized overlap")
+        self.ax_overlap.axvline(offsets_um[best_index], color="#111827", alpha=0.35, linewidth=1.0)
+        self.ax_overlap.scatter([offsets_um[best_index]], [overlap[best_index]], color="#15803d", s=28, zorder=3)
+        self.ax_overlap.set_xlabel("Round-trip length offset from L (um)")
+        self.ax_overlap.set_ylabel("Overlap")
+        self.ax_overlap.set_ylim(bottom=-0.02, top=max(1.05, float(np.max(overlap)) * 1.08))
+        self.ax_overlap.grid(True, alpha=0.25)
+        self.ax_overlap.legend(loc="upper right")
 
-    @staticmethod
-    def _make_spinbox(minimum, maximum, value, decimals, step):
-        box = QDoubleSpinBox()
-        box.setRange(minimum, maximum)
-        box.setDecimals(decimals)
-        box.setSingleStep(step)
-        box.setKeyboardTracking(True)
-        box.setValue(value)
-        return box
-
-    def _connect_auto_update(self):
-        boxes = [
-            self.t1_input,
-            self.t2_input,
-            self.t3_input,
-            self.t4_input,
-            self.length_coarse_input,
-            self.length_fine_nm_input,
-            self.numfsr_input,
-            self.lambda1_input,
-            self.lambda2_input,
-        ]
-        for box in boxes:
-            box.valueChanged.connect(self.update_plot)
-
-    def update_plot(self):
-        try:
-            t1 = self.t1_input.value()
-            t2 = self.t2_input.value()
-            t3 = self.t3_input.value()
-            t4 = self.t4_input.value()
-            length_coarse_m = self.length_coarse_input.value()
-            length_fine_nm = self.length_fine_nm_input.value()
-            length_m = length_coarse_m + length_fine_nm * 1e-9
-            num_fsr = self.numfsr_input.value()
-            lambda1_nm = self.lambda1_input.value()
-            lambda2_nm = self.lambda2_input.value()
-
-            det1, trans1 = transmission_vs_detuning_fsr(
-                lambda1_nm * 1e-9, length_m, num_fsr, t1, t2, t3, t4
-            )
-            det2, trans2 = transmission_vs_detuning_fsr(
-                lambda2_nm * 1e-9, length_m, num_fsr, t1, t2, t3, t4
-            )
-        except Exception as exc:
-            self.status_label.setText(f"Input error: {exc}")
-            return
-
-        self.status_label.setText("")
-        self.figure.clear()
-        ax = self.figure.add_subplot(1, 1, 1)
-
-        ax.plot(det1, trans1, color="#1f77b4", lw=1.2, label=f"{lambda1_nm:g} nm")
-        ax.plot(det2, trans2, color="#d62728", lw=1.2, label=f"{lambda2_nm:g} nm")
-        ax.set_title("Transmission Spectra")
-        ax.set_xlabel("Detuning (FSR)")
-        ax.set_ylabel("Transmission (norm.)")
-        ax.set_ylim(0, 1.05)
-        ax.grid(alpha=0.25)
-        ax.legend()
-
+        self._update_summary(params, offsets_um, response1, response2, overlap, best_index)
         self.canvas.draw_idle()
 
+    def _update_summary(
+        self,
+        params: CavityParams,
+        offsets_um: np.ndarray,
+        response1: np.ndarray,
+        response2: np.ndarray,
+        overlap: np.ndarray,
+        best_index: int,
+    ) -> None:
+        best_offset = float(offsets_um[best_index])
+        best_length = params.length_m + best_offset * 1e-6
+        peak1_offset_um = nearest_resonance_offset_um(params.length_m, params.lambda1_nm)
+        peak2_offset_um = nearest_resonance_offset_um(params.length_m, params.lambda2_nm)
+        center_response1 = cavity_response(np.array([params.length_m]), params.lambda1_nm, params.transmission1)[0]
+        center_response2 = cavity_response(np.array([params.length_m]), params.lambda2_nm, params.transmission2)[0]
+        kappa1 = cavity_kappa_rad_s(params.length_m, params.transmission1)
+        kappa2 = cavity_kappa_rad_s(params.length_m, params.transmission2)
+        finesse1 = cavity_finesse(params.transmission1)
+        finesse2 = cavity_finesse(params.transmission2)
 
-def main():
+        self.summary_label.setText(
+            "Center length\n"
+            f"lambda 1 transmission: {center_response1:.6g}\n"
+            f"lambda 1 kappa/2pi: {format_rate(kappa1)}\n"
+            f"lambda 1 finesse: {format_scalar(finesse1)}\n"
+            f"lambda 2 transmission: {center_response2:.6g}\n"
+            f"lambda 2 kappa/2pi: {format_rate(kappa2)}\n"
+            f"lambda 2 finesse: {format_scalar(finesse2)}\n\n"
+            "Best simultaneous point\n"
+            f"offset: {best_offset:.6g} um\n"
+            f"L: {best_length * 100.0:.12g} cm\n"
+            f"lambda 1 transmission: {response1[best_index]:.6g}\n"
+            f"lambda 2 transmission: {response2[best_index]:.6g}\n"
+            f"overlap: {overlap[best_index]:.6g}\n\n"
+            "Individual nearest maxima\n"
+            f"lambda 1 offset: {peak1_offset_um:.6g} um\n"
+            f"lambda 2 offset: {peak2_offset_um:.6g} um"
+        )
+
+
+def normalize(values: np.ndarray) -> np.ndarray:
+    maximum = float(np.max(values))
+    if maximum <= 0.0:
+        return np.zeros_like(values)
+    return values / maximum
+
+
+def main() -> int:
     app = QApplication(sys.argv)
-    window = CavityGui()
-    window.resize(1100, 600)
+    window = SimultaneousCavityWindow()
     window.show()
-    sys.exit(app.exec())
+    return app.exec()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
