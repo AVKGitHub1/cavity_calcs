@@ -11,6 +11,7 @@ from matplotlib.figure import Figure
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDoubleSpinBox,
     QFormLayout,
     QGridLayout,
@@ -63,7 +64,7 @@ def cavity_kappa_rad_s(length_m: float, transmission: float) -> float:
     """Return the exact Airy FWHM linewidth as angular frequency."""
 
     finesse = cavity_finesse(transmission)
-    if length_m <= 0.0 or not np.isfinite(finesse):
+    if length_m <= 0.0 or np.isnan(finesse):
         return np.nan
 
     linewidth_hz = SPEED_OF_LIGHT_M_S / length_m / finesse
@@ -78,6 +79,8 @@ def cavity_finesse(transmission: float) -> float:
         return np.nan
 
     half_width_argument = (1.0 - round_trip_field) / (2.0 * np.sqrt(round_trip_field))
+    if half_width_argument == 0.0:
+        return np.inf
     if half_width_argument >= 1.0:
         return np.nan
 
@@ -92,9 +95,38 @@ def nearest_resonance_offset_um(length_m: float, wavelength_nm: float) -> float:
     return (n * lam_m - length_m) * 1e6
 
 
+def scan_quality_notes(params: CavityParams, response1: np.ndarray, response2: np.ndarray) -> list[str]:
+    """Warn when the scan grid undersamples a resonance or misses it entirely."""
+
+    step_m = params.scan_range_um * 1e-6 / max(params.points - 1, 1)
+    notes: list[str] = []
+    per_wavelength = (
+        ("lambda 1", params.lambda1_nm, params.transmission1, response1),
+        ("lambda 2", params.lambda2_nm, params.transmission2, response2),
+    )
+    for label, wavelength_nm, transmission, response in per_wavelength:
+        finesse = cavity_finesse(transmission)
+        if not np.isnan(finesse):
+            fwhm_m = wavelength_nm * 1e-9 / finesse
+            samples_per_fwhm = fwhm_m / step_m
+            if samples_per_fwhm < 10.0:
+                notes.append(
+                    f"{label} undersampled: ~{samples_per_fwhm:.2g} samples per FWHM; "
+                    "increase samples or reduce scan range"
+                )
+        if float(np.max(response)) < 0.5:
+            notes.append(
+                f"{label} has no resonance in the scan window "
+                f"(max {float(np.max(response)):.3g}); its overlap curve is rescaled from that maximum"
+            )
+    return notes
+
+
 def format_scalar(value: float) -> str:
-    if not np.isfinite(value):
+    if np.isnan(value):
         return "n/a"
+    if np.isinf(value):
+        return "inf"
     return f"{value:.6g}"
 
 
@@ -143,8 +175,8 @@ class SimultaneousCavityWindow(QMainWindow):
         self.canvas = FigureCanvas(self.figure)
         self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        self.ax_transmission = self.figure.add_subplot(2, 1, 1)
-        self.ax_overlap = self.figure.add_subplot(2, 1, 2, sharex=self.ax_transmission)
+        self.ax_transmission = None
+        self.ax_overlap = None
 
         controls = self._build_controls()
         summary = self._build_summary()
@@ -171,12 +203,12 @@ class SimultaneousCavityWindow(QMainWindow):
         form = QFormLayout(group)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
-        self.transmission_lambda1 = LabeledDoubleSpinBox(0.0, 1.0, 0.1, 0.001, 6)
+        self.transmission_lambda1 = LabeledDoubleSpinBox(0.0, 1.0, 0.042, 0.001, 6)
         self.transmission_lambda2 = LabeledDoubleSpinBox(0.0, 1.0, 0.05, 0.001, 6)
         self.lambda1 = LabeledDoubleSpinBox(1.0, 100000.0, 780.2415, 0.01, 4, " nm")
         self.lambda2 = LabeledDoubleSpinBox(1.0, 100000.0, 479.9970, 0.01, 4, " nm")
-        self.length = LabeledDoubleSpinBox(1e-7, 1.0e7, 50.0, 0.005, 6, " cm")
-        self.scan_range = LabeledDoubleSpinBox(0.000001, 1.0e6, 2.0, 0.01, 6, " um")
+        self.length = LabeledDoubleSpinBox(1e-7, 1.0e7, 20.0, 0.005, 9, " cm")
+        self.scan_range = LabeledDoubleSpinBox(0.000001, 1.0e6, 1000.0, 0.01, 6, " um")
 
         self.points = QSpinBox()
         self.points.setRange(200, 10000000)
@@ -184,6 +216,8 @@ class SimultaneousCavityWindow(QMainWindow):
         self.points.setSingleStep(10000)
         self.points.setAlignment(Qt.AlignmentFlag.AlignRight)
         self.points.setKeyboardTracking(False)
+
+        self.overlap_only = QCheckBox("Plot overlap only")
 
         self.reset_button = QPushButton("Reset")
         self.reset_button.clicked.connect(self.reset_defaults)
@@ -195,6 +229,7 @@ class SimultaneousCavityWindow(QMainWindow):
         form.addRow("L", self.length)
         form.addRow("Scan range", self.scan_range)
         form.addRow("Samples", self.points)
+        form.addRow(self.overlap_only)
         form.addRow(self.reset_button)
 
         group.setMaximumWidth(300)
@@ -222,6 +257,7 @@ class SimultaneousCavityWindow(QMainWindow):
         )
         for control in controls:
             control.valueChanged.connect(self.update_plot)
+        self.overlap_only.stateChanged.connect(self.update_plot)
 
     def reset_defaults(self) -> None:
         self.transmission_lambda1.setValue(0.1)
@@ -231,6 +267,7 @@ class SimultaneousCavityWindow(QMainWindow):
         self.length.setValue(50.0)
         self.scan_range.setValue(2.0)
         self.points.setValue(1000000)
+        self.overlap_only.setChecked(False)
 
     def params(self) -> CavityParams:
         return CavityParams(
@@ -243,7 +280,7 @@ class SimultaneousCavityWindow(QMainWindow):
             points=self.points.value(),
         )
 
-    def update_plot(self) -> None:
+    def update_plot(self, *_args: object) -> None:
         params = self.params()
         offsets_um = np.linspace(-0.5 * params.scan_range_um, 0.5 * params.scan_range_um, params.points)
         lengths_m = params.length_m + offsets_um * 1e-6
@@ -256,15 +293,30 @@ class SimultaneousCavityWindow(QMainWindow):
         overlap = norm1 * norm2
         best_index = int(np.argmax(overlap))
 
-        self.ax_transmission.clear()
-        self.ax_overlap.clear()
+        self.figure.clear()
+        if self.overlap_only.isChecked():
+            self.ax_transmission = None
+            self.ax_overlap = self.figure.add_subplot(1, 1, 1)
+        else:
+            self.ax_transmission = self.figure.add_subplot(2, 1, 1)
+            self.ax_overlap = self.figure.add_subplot(2, 1, 2, sharex=self.ax_transmission)
 
-        self.ax_transmission.plot(offsets_um, response1, label=f"lambda 1 = {params.lambda1_nm:g} nm", color="#2563eb")
-        self.ax_transmission.plot(offsets_um, response2, label=f"lambda 2 = {params.lambda2_nm:g} nm", color="#c2410c")
-        self.ax_transmission.axvline(offsets_um[best_index], color="#111827", alpha=0.35, linewidth=1.0)
-        self.ax_transmission.set_ylabel("Cavity transmission (norm.)")
-        self.ax_transmission.grid(True, alpha=0.25)
-        self.ax_transmission.legend(loc="upper right")
+            self.ax_transmission.plot(
+                offsets_um,
+                response1,
+                label=f"lambda 1 = {params.lambda1_nm:g} nm",
+                color="#2563eb",
+            )
+            self.ax_transmission.plot(
+                offsets_um,
+                response2,
+                label=f"lambda 2 = {params.lambda2_nm:g} nm",
+                color="#c2410c",
+            )
+            self.ax_transmission.axvline(offsets_um[best_index], color="#111827", alpha=0.35, linewidth=1.0)
+            self.ax_transmission.set_ylabel("Cavity transmission")
+            self.ax_transmission.grid(True, alpha=0.25)
+            self.ax_transmission.legend(loc="upper right")
 
         self.ax_overlap.plot(offsets_um, overlap, color="#15803d", label="Normalized overlap")
         self.ax_overlap.axvline(offsets_um[best_index], color="#111827", alpha=0.35, linewidth=1.0)
@@ -298,6 +350,9 @@ class SimultaneousCavityWindow(QMainWindow):
         finesse1 = cavity_finesse(params.transmission1)
         finesse2 = cavity_finesse(params.transmission2)
 
+        notes = scan_quality_notes(params, response1, response2)
+        notes_text = "\n\nWarnings\n" + "\n".join(notes) if notes else ""
+
         self.summary_label.setText(
             "Center length\n"
             f"lambda 1 transmission: {center_response1:.6g}\n"
@@ -315,6 +370,7 @@ class SimultaneousCavityWindow(QMainWindow):
             "Individual nearest maxima\n"
             f"lambda 1 offset: {peak1_offset_um:.6g} um\n"
             f"lambda 2 offset: {peak2_offset_um:.6g} um"
+            f"{notes_text}"
         )
 
 

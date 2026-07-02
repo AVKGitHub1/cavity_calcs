@@ -33,10 +33,11 @@ python simultaneous_cav.py
 - `L (cm)`: cavity round-trip length in centimeters
 - `Scan range (um)`: Scan range around L in micrometers
 - `Samples`: number of scan samples; defaults to `1000000`
+- `Plot overlap only`: show only the normalized overlap trace
 
 #### Outputs
 
-- Normalized cavity transmission for both wavelengths plotted against length centered at L
+- Cavity transmission for both wavelengths plotted against length centered at L (each lineshape peaks at 1 on resonance)
 - Overlap of the transmission responses
 - Effective cavity kappa at the center length, reported as `kappa / 2pi`
 - Finesse for both wavelengths
@@ -54,4 +55,9 @@ scan. The effective kappa readout is the
 exact Airy FWHM linewidth from the round-trip field reflectivity, converted to
 `kappa / 2pi`. The finesse is `FSR / FWHM` using that same exact Airy linewidth.
 Both readouts show `n/a` if the resonance is too broad to have a half-maximum
-crossing.
+crossing; at `T = 0` the finesse is reported as `inf`.
+
+The readout warns when the scan grid is too coarse to resolve a resonance
+(fewer than ~10 samples per FWHM) and when a wavelength has no resonance inside
+the scan window (in which case its normalized overlap curve is rescaled from a
+sub-unity maximum and the best-point readout should not be trusted).
