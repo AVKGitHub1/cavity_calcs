@@ -1,0 +1,13 @@
+{
+  "name": "ring-cavity-explorer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A dependency-free four-mirror ring cavity calculator.",
+  "scripts": {
+    "test": "node --test tests/cavity-model.test.cjs",
+    "test:browser": "node tests/browser-check.cjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.64.0"
+  }
+}

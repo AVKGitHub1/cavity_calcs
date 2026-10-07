@@ -4,6 +4,21 @@ Repository for random cavity calculations.
 
 ## Scripts
 
+### Ring Cavity Explorer website
+
+[`cavity_power_calcs/index.html`](cavity_power_calcs/index.html) is a standalone
+website for exploring resonant power and decay rates in a four-mirror ring
+cavity. Open it directly in a browser, or serve it locally with:
+
+```bash
+python -m http.server 8000 --bind 127.0.0.1 --directory cavity_power_calcs
+```
+
+Visit <http://localhost:8000>. Set mirror transmissions, input and output ports,
+the scanned mirror, round-trip length, and wavelength (780 nm by default).
+See [`cavity_power_calcs/README.md`](cavity_power_calcs/README.md) for the physics
+conventions and verification commands.
+
 ### Simultaneously Resonant Cavity
 
 `simultaneous_cav.py` is a small PyQt6 GUI to visualize the transmission spectra of a traveling-wave ring cavity for two wavelengths.
