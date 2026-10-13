@@ -17,6 +17,8 @@ python -m http.server 8000 --bind 127.0.0.1 --directory cavity_power_calcs
 Visit <http://localhost:8000>. Set mirror transmissions, input and output ports,
 the scanned mirror, round-trip length, resonance wavelength (780 nm by default),
 and laser detuning from resonance in MHz (0 by default).
+The model includes exact round-trip interference and sequential output losses,
+including fully transmitting mirrors and detuning across multiple resonances.
 See [`cavity_power_calcs/README.md`](cavity_power_calcs/README.md) for the physics
 conventions and verification commands.
 

@@ -1,4 +1,4 @@
-/* High-finesse, single-resonance traveling-wave model. Power fractions, not amplitudes. */
+/* Exact traveling-wave round-trip model. Power fractions, not amplitudes. */
 (function (root) {
   'use strict';
   const C = 299792458;
@@ -43,28 +43,53 @@
     const transmission = config.transmissions.map((value, index) => (index === config.scanMirror ? scannedPpm : value) * PPM);
     const input = transmission[config.inputPort];
     const output = transmission[config.outputPort];
-    const other = transmission.reduce((sum, value, index) => sum + (index === config.inputPort ? 0 : value), config.otherLoss * PPM);
-    const total = input + other;
+    const loss = config.otherLoss * PPM;
+    const mirrorLogs = transmission.map(value => Math.log1p(-value));
+    const otherLog = mirrorLogs.reduce((sum, value, index) => sum + (index === config.inputPort ? 0 : value), Math.log1p(-loss));
+    const roundTripLog = mirrorLogs[config.inputPort] + otherLog;
+    const total = Math.max(0, -Math.expm1(roundTripLog));
+    const returnLoss = -Math.expm1(otherLog);
+    const roundTripAmplitude = Math.exp(roundTripLog / 2);
+    // expm1 retains very small losses when exp(roundTripLog / 2) rounds to one.
+    const resonanceGap = -Math.expm1(roundTripLog / 2);
     const fsr = C / (config.groupIndex * config.length);
-    const kappa = total * fsr;
-    const kappaExt = output * fsr;
+    const kappa = Math.max(0, -roundTripLog * fsr);
+    const kappaExt = -mirrorLogs[config.outputPort] * fsr;
     const detuningHz = config.detuningMHz * 1e6;
-    // Delta = 2 pi (f_laser - f_resonance); power denominator is S² + (2 Delta tau)².
-    const denominator = Math.hypot(total, 4 * Math.PI * detuningHz / fsr);
+    const phase = 2 * Math.PI * ((detuningHz % fsr) / fsr);
+    // |1 - rho exp(i phi)|² = (1 - rho)² + 4 rho sin²(phi / 2).
+    const denominator = Math.hypot(resonanceGap, 2 * Math.sqrt(roundTripAmplitude) * Math.sin(phase / 2));
     // A perfectly closed, initially empty cavity cannot be excited.
-    const circulating = denominator === 0 ? 0 : 4 * (input / denominator) / denominator;
-    const coupled = denominator === 0 ? 0 : 4 * (input / denominator) * (other / denominator);
-    const outputPower = denominator === 0 ? 0 : 4 * (input / denominator) * (output / denominator);
-    const resonanceResponse = denominator === 0 ? 0 : (total / denominator) ** 2;
+    const circulating = denominator === 0 ? 0 : (input / denominator) / denominator;
+    const coupled = denominator === 0 ? 0 : (input / denominator) * (returnLoss / denominator);
+    const resonanceResponse = denominator === 0 ? 0 : (resonanceGap / denominator) ** 2;
+    // Reference power is just after input injection. Propagate in cyclic mirror order.
+    // The additional lumped loss is encountered immediately before returning to input.
+    const passFractions = [0, 0, 0, 0];
+    let surviving = 1;
+    for (let step = 1; step < 4; step++) {
+      const port = (config.inputPort + step) % 4;
+      passFractions[port] = surviving * transmission[port];
+      surviving *= 1 - transmission[port];
+    }
+    const absorbedPower = circulating * surviving * loss;
+    passFractions[config.inputPort] = surviving * (1 - loss) * input;
+    const portPowers = passFractions.map(fraction => circulating * fraction);
+    // At input the measurable power includes prompt reflection and interference.
+    const reflected = Math.max(0, 1 - coupled);
+    portPowers[config.inputPort] = reflected;
+    const outputPower = portPowers[config.outputPort];
     const linewidth = kappa / (2 * Math.PI);
+    const halfMaximumSine = roundTripAmplitude === 0 ? Infinity : resonanceGap / (2 * Math.sqrt(roundTripAmplitude));
+    const airyLinewidth = halfMaximumSine > 1 ? null : 2 * fsr / Math.PI * Math.asin(halfMaximumSine);
     const frequency = C / (config.wavelength * 1e-9);
     return {
       scannedPpm, total, input, output, circulating, coupled, outputPower, detuningHz, resonanceResponse,
-      reflected: 1 - coupled, kappa, kappaExt, linewidth,
+      reflected, portPowers, absorbedPower, roundTripAmplitude, kappa, kappaExt, linewidth, airyLinewidth,
       externalLinewidth: kappaExt / (2 * Math.PI), fsr,
-      finesse: total === 0 ? Infinity : 2 * Math.PI / total,
-      escapeShare: total === 0 ? null : output / total,
-      frequency, quality: linewidth === 0 ? Infinity : frequency / linewidth,
+      finesse: airyLinewidth === null ? null : airyLinewidth === 0 ? Infinity : fsr / airyLinewidth,
+      escapeShare: total === 0 ? null : passFractions[config.outputPort] / total,
+      frequency, quality: roundTripAmplitude === 0 ? null : linewidth === 0 ? Infinity : frequency / linewidth,
     };
   }
 
@@ -74,12 +99,21 @@
     const points = new Set([config.scanStart, config.scanEnd]);
     for (let i = 1; i < samples; i++) points.add(config.scanStart + (config.scanEnd - config.scanStart) * i / samples);
     // Resolve narrow peaks near zero, even in scans spanning many decades.
-    const fixedLoss = config.otherLoss + config.transmissions.reduce((sum, value, index) => sum + (index === config.scanMirror ? 0 : value), 0);
+    const fixedLog = config.transmissions.reduce((sum, value, index) => sum + (index === config.scanMirror ? 0 : Math.log1p(-value * PPM)), Math.log1p(-config.otherLoss * PPM));
+    const fixedSurvival = Math.exp(fixedLog);
+    const fixedLoss = -Math.expm1(fixedLog);
     const fsr = C / (config.groupIndex * config.length);
-    const peakScale = Math.hypot(fixedLoss, 4 * Math.PI * config.detuningMHz * 1e6 / fsr / PPM);
-    if (peakScale > 0) for (let i = -60; i <= 60; i++) {
-      const value = peakScale * Math.pow(10, i / 15);
-      if (value > config.scanStart && value < config.scanEnd) points.add(value);
+    const phase = 2 * Math.PI * ((config.detuningMHz * 1e6 % fsr) / fsr);
+    const discriminant = Math.hypot(fixedLoss, 2 * Math.sqrt(fixedSurvival) * Math.sin(phase));
+    // Extrema for numerators proportional to scanned T, or independent of it.
+    const transmissionPeak = Math.cos(phase) <= 0 ? 1 : 2 * discriminant / (1 + fixedSurvival + discriminant);
+    const buildupPeak = Math.cos(phase) <= 0 ? 1 : fixedSurvival === 0 ? 0 : (Math.sin(phase) ** 2 - fixedLoss) / fixedSurvival;
+    for (const peak of [transmissionPeak, buildupPeak]) {
+      if (peak <= 0 || peak > 1) continue;
+      for (let i = -60; i <= 60; i++) {
+        const value = peak / PPM * Math.pow(10, i / 15);
+        if (value > config.scanStart && value < config.scanEnd) points.add(value);
+      }
     }
     return [...points].sort((a, b) => a - b).map(value => calculate(config, value));
   }

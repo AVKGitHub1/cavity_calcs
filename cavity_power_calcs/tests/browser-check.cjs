@@ -15,9 +15,9 @@ const { DEFAULTS, calculate } = require('../cavity-model.js');
     await page.goto(pathToFileURL(path.resolve(__dirname, '../index.html')).href);
     await page.waitForSelector('#power-chart path');
     const text = id => page.locator(`#${id}`).textContent();
-    assert.equal(await text('coupled-value'), '32.53%');
-    assert.equal(await text('circulating-value'), '31.89 ×');
-    assert.equal(await text('kappa-value'), '2.496 MHz');
+    assert.equal(await text('coupled-value'), '32.41%');
+    assert.equal(await text('circulating-value'), '31.78 ×');
+    assert.equal(await text('kappa-value'), '2.507 MHz');
     assert.equal(await page.locator('#power-chart path').count(), 3);
     assert.equal(await page.locator('#decay-chart path').count(), 2);
 
@@ -35,35 +35,37 @@ const { DEFAULTS, calculate } = require('../cavity-model.js');
       })));
     const resonantPowerCurves = await curves('power-chart');
     const resonantDecayGeometry = await decayGeometry();
-    const halfLinewidthMHz = calculate(DEFAULTS).linewidth / 2e6;
+    const halfLinewidthMHz = calculate(DEFAULTS).airyLinewidth / 2e6;
     assert.equal(await page.locator('#detuning').inputValue(), '0');
     await page.locator('#detuning').fill(String(halfLinewidthMHz));
-    assert.equal(await text('circulating-value'), '15.94 ×');
-    assert.equal(await text('coupled-value'), '16.26%');
-    assert.match(await text('output-note'), /^15\.94%/);
+    assert.equal(await text('circulating-value'), '15.89 ×');
+    assert.equal(await text('coupled-value'), '16.20%');
+    assert.match(await text('output-note'), /^15\.89%/);
     assert.equal(await text('response-note'), '50% of resonant power at this scan point');
     assert.match(await text('subtitle'), /detuned/);
-    assert.match(await text('power-context'), /Δf = \+1\.248 MHz/);
-    assert.equal(await text('kappa-value'), '2.496 MHz');
+    assert.match(await text('power-context'), /Δf = \+1\.253 MHz/);
+    assert.equal(await text('kappa-value'), '2.507 MHz');
     const detunedPowerCurves = await curves('power-chart');
     assert.notDeepEqual(detunedPowerCurves, resonantPowerCurves);
     assert.deepEqual(await decayGeometry(), resonantDecayGeometry);
     await page.screenshot({ path: path.join(outputDir, 'detuned.png'), fullPage: true });
     await page.locator('#detuning').fill(String(-halfLinewidthMHz));
-    assert.equal(await text('circulating-value'), '15.94 ×');
-    assert.match(await text('power-context'), /Δf = -1\.248 MHz/);
+    assert.equal(await text('circulating-value'), '15.89 ×');
+    assert.match(await text('power-context'), /Δf = -1\.253 MHz/);
     assert.deepEqual(await curves('power-chart'), detunedPowerCurves);
     await page.locator('#detuning').fill('');
     assert.equal(await page.locator('#detuning').getAttribute('aria-invalid'), 'true');
     assert.equal(await page.locator('#form-error').isVisible(), true);
     assert.equal(await page.locator('#scan-point').isDisabled(), true);
-    assert.equal(await text('circulating-value'), '15.94 ×');
-    await page.locator('#detuning').fill('200');
-    assert.match(await text('model-warning'), /Detuning exceeds 10% of the FSR/);
+    assert.equal(await text('circulating-value'), '15.89 ×');
+    await page.locator('#detuning').fill('1400');
+    assert.equal(await page.locator('#model-warning').isVisible(), false);
+    assert.equal(await text('circulating-value'), '31.78 ×');
+    assert.deepEqual(await curves('power-chart'), resonantPowerCurves);
     await page.locator('#detuning').fill('0');
     assert.equal(await page.locator('#form-error').isVisible(), false);
     assert.equal(await page.locator('#model-warning').isVisible(), false);
-    assert.equal(await text('circulating-value'), '31.89 ×');
+    assert.equal(await text('circulating-value'), '31.78 ×');
     assert.deepEqual(await curves('power-chart'), resonantPowerCurves);
 
     // The keyboard-accessible slider moves both plot markers and the selected mirror input.
@@ -116,6 +118,8 @@ const { DEFAULTS, calculate } = require('../cavity-model.js');
     assert.equal(await page.locator('#power-tooltip').isVisible(), true);
     await page.locator('#power-chart').click({ position: { x: 200, y: 100 } });
     assert.notEqual(await page.locator('#mirror-3').inputValue(), '20000');
+    await page.locator('#detuning').fill('1500');
+    assert.equal(await page.locator('#power-tooltip').isVisible(), false);
 
     // A perfectly closed cavity has no NaN or invalid SVG paths.
     for (let i = 0; i < 4; i++) await page.locator(`#mirror-${i}`).fill('0');
@@ -123,6 +127,42 @@ const { DEFAULTS, calculate } = require('../cavity-model.js');
     assert.equal(await text('finesse-note'), 'Finesse = ∞');
     assert.equal(await page.locator('#model-warning').isVisible(), true);
     assert.equal(await page.locator('svg path').evaluateAll(nodes => nodes.some(node => /NaN|Infinity/.test(node.getAttribute('d')))), false);
+
+    // Regression: the reported all-transparent case stays single-pass at 1500 MHz.
+    await page.locator('#input-port').selectOption('0');
+    await page.locator('#output-port').selectOption('1');
+    await page.locator('#scan-mirror').selectOption('0');
+    await page.locator('#detuning').fill('1500');
+    for (let i = 0; i < 4; i++) await page.locator(`#mirror-${i}`).fill('1000000');
+    assert.equal(await text('coupled-value'), '100.00%');
+    assert.equal(await text('circulating-value'), '1.00 ×');
+    assert.match(await text('output-note'), /^100\.00%.*100% round-trip escape share/);
+    assert.equal(await text('response-note'), 'No resonant buildup');
+    assert.equal(await page.locator('#power-tooltip').isVisible(), false);
+    assert.equal(await text('kappa-value'), '∞ MHz');
+    assert.match(await text('finesse-note'), /undefined/);
+    assert.match(await text('model-warning'), /No light survives a full round trip/);
+    assert.match(await text('decay-chart'), /No finite decay rates/);
+    const finiteSvg = () => page.locator('svg').evaluateAll(nodes => nodes.every(node => !/NaN|Infinity/.test(node.innerHTML)));
+    assert.equal(await finiteSvg(), true);
+    await page.screenshot({ path: path.join(outputDir, 'all-transparent.png'), fullPage: true });
+    await page.locator('#detuning').fill('0');
+    assert.equal(await text('coupled-value'), '100.00%');
+    await page.locator('#output-port').selectOption('3');
+    assert.match(await text('output-note'), /^0\.00%/);
+    await page.locator('#input-port').selectOption('3');
+    assert.equal(await page.locator('#output-port').inputValue(), '0');
+    assert.match(await text('output-note'), /^100\.00%/);
+
+    // A divergent scan endpoint must not suppress the finite portion of a rate curve.
+    await page.locator('#input-port').selectOption('0');
+    await page.locator('#output-port').selectOption('1');
+    await page.locator('#mirror-1').fill('10000');
+    await page.locator('#mirror-2').fill('100');
+    await page.locator('#mirror-3').fill('100');
+    assert.equal(await finiteSvg(), true);
+    assert.match(await text('decay-chart'), /Infinite decay rates are not plotted/);
+    assert.ok((await curves('decay-chart')).every(curve => curve.trim().length > 0));
 
     await page.reload();
     await page.waitForSelector('#power-chart path');
@@ -134,7 +174,7 @@ const { DEFAULTS, calculate } = require('../cavity-model.js');
       if (width === 390 || width === 1440) await page.screenshot({ path: path.join(outputDir, `${width === 390 ? 'mobile' : 'wide'}.png`), fullPage: true });
     }
     assert.deepEqual(errors, []);
-    console.log('Browser checks passed: reference values, signed detuning, power curves, slider, ports, scanning, wavelength, validation, range handling, tooltips, closed cavity, and five viewport sizes.');
+    console.log('Browser checks passed: exact powers, transparent mirrors at 1500 MHz, sequential ports, infinite decay rates, periodic detuning, controls, validation, closed cavity, and five viewport sizes.');
     console.log(`Screenshots: ${outputDir}`);
   } finally {
     await browser.close();

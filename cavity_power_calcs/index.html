@@ -36,7 +36,7 @@
             <div class="field-grid">
               <label>Scan mirror<select id="scan-mirror" name="scan-mirror"><option value="0">Mirror 1</option><option value="1">Mirror 2</option><option value="2">Mirror 3</option><option value="3">Mirror 4</option></select></label>
               <label>Output port<select id="output-port" name="output-port"><option value="0" disabled>Mirror 1</option><option value="1" selected>Mirror 2</option><option value="2">Mirror 3</option><option value="3">Mirror 4</option></select></label>
-              <label class="full-width">Input port<select id="input-port" name="input-port"><option value="0">Mirror 1</option><option value="1">Mirror 2</option><option value="2">Mirror 3</option><option value="3">Mirror 4</option></select></label>
+              <label class="full-width">Input port<select id="input-port" name="input-port" aria-describedby="path-hint"><option value="0">Mirror 1</option><option value="1">Mirror 2</option><option value="2">Mirror 3</option><option value="3">Mirror 4</option></select><small id="path-hint">Travel order: 1 → 2 → 3 → 4 → 1.</small></label>
               <label>Scan start (ppm)<input id="scan-start" name="scan-start" type="number" min="0" max="1000000" step="any" value="0" required></label>
               <label>Scan end (ppm)<input id="scan-end" name="scan-end" type="number" min="0" max="1000000" step="any" value="15000" required></label>
               <label class="full-width">X-axis tick spacing (ppm)<input id="tick-spacing" name="tick-spacing" type="number" min="0.000001" max="1000000" step="any" value="1000" required></label>
@@ -50,7 +50,7 @@
               <label class="full-width">Resonance wavelength (nm)<input id="wavelength" name="wavelength" type="number" min="0.000001" max="1000000000" step="any" value="780" aria-describedby="wavelength-hint" required><small id="wavelength-hint">Resonance frequency 384.35 THz</small></label>
               <label class="full-width">Laser detuning Δf (MHz)<input id="detuning" name="detuning" type="number" min="-1000000000" max="1000000000" step="any" value="0" aria-describedby="detuning-hint" required><small id="detuning-hint">Δf = f<sub>laser</sub> − f<sub>resonance</sub>. Positive is above resonance; 0 is on resonance.</small></label>
               <label>Group index<input id="group-index" name="group-index" type="number" min="0.000001" max="1000000" step="any" value="1" required></label>
-              <label>Other round-trip loss (ppm)<input id="other-loss" name="other-loss" type="number" min="0" max="1000000" step="any" value="0" required></label>
+              <label>Other round-trip loss (ppm)<input id="other-loss" name="other-loss" type="number" min="0" max="1000000" step="any" value="0" aria-describedby="loss-hint" required><small id="loss-hint">Lumped just before return to input.</small></label>
             </div>
           </fieldset>
           <p id="form-error" class="notice error" role="alert" hidden></p>
@@ -77,22 +77,23 @@
         </section>
 
         <section class="metrics" aria-label="Results at the current scan point" aria-live="polite" aria-atomic="true">
-          <article class="panel metric"><h3>Net incident power coupled in</h3><p class="metric-value blue-text" id="coupled-value">32.53%</p><p class="metric-note">Other ports + internal loss</p></article>
-          <article class="panel metric"><h3 id="leakage-title">Mirror 2 leakage per pass</h3><p class="metric-value green-text" id="leakage-value">1%</p><p class="metric-note">Fraction of circulating power</p><p class="metric-note" id="output-note">31.89% of incident power exits here · 89.3% escape share</p></article>
-          <article class="panel metric"><h3>Circulating power</h3><p class="metric-value orange-text" id="circulating-value">31.89 ×</p><p class="metric-note">Per 1 unit of incident power</p><p class="metric-note" id="response-note">100% of resonant power at this scan point</p></article>
-          <article class="panel metric"><h3>κ / 2π · total</h3><p class="metric-value" id="kappa-value">2.496 MHz</p><p class="metric-note" id="kappa-note">κ = 15.68 × 10⁶ s⁻¹</p></article>
-          <article class="panel metric"><h3>κ<sub>ext</sub> / 2π</h3><p class="metric-value" id="external-value">2.228 MHz</p><p class="metric-note" id="external-note">κext = 14 × 10⁶ s⁻¹ · 89.3% escape share</p></article>
-          <article class="panel metric"><h3>FSR · finesse</h3><p class="metric-value" id="fsr-value">1.4 GHz</p><p class="metric-note" id="finesse-note">Finesse = 561</p></article>
+          <article class="panel metric"><h3>Net incident power coupled in</h3><p class="metric-value blue-text" id="coupled-value">32.41%</p><p class="metric-note">Other ports + internal loss</p></article>
+          <article class="panel metric"><h3 id="leakage-title">Mirror 2 leakage per pass</h3><p class="metric-value green-text" id="leakage-value">1%</p><p class="metric-note">Fraction of power reaching this mirror</p><p class="metric-note" id="output-note">31.78% of incident power exits here · 89.4% round-trip escape share</p></article>
+          <article class="panel metric"><h3>Circulating power</h3><p class="metric-value orange-text" id="circulating-value">31.78 ×</p><p class="metric-note" id="circulating-note">Just after mirror 1 · per unit incident power</p><p class="metric-note" id="response-note">100% of resonant power at this scan point</p></article>
+          <article class="panel metric"><h3>κ / 2π · total</h3><p class="metric-value" id="kappa-value">2.507 MHz</p><p class="metric-note" id="kappa-note">κ = 15.75 × 10⁶ s⁻¹</p></article>
+          <article class="panel metric"><h3>κ<sub>ext</sub> / 2π</h3><p class="metric-value" id="external-value">2.239 MHz</p><p class="metric-note" id="external-note">κext = 14.07 × 10⁶ s⁻¹ · mirror log-loss contribution</p></article>
+          <article class="panel metric"><h3>FSR · finesse</h3><p class="metric-value" id="fsr-value">1.4 GHz</p><p class="metric-note" id="finesse-note">Finesse = 558</p></article>
         </section>
 
         <p id="model-warning" class="notice" role="status" hidden></p>
         <details class="model-details"><summary>About this model</summary><div>
-          <p>Continuous-wave drive, perfect mode matching, and a single traveling-wave mode. This is a high-finesse (small round-trip loss) model near one cavity resonance. All transmissions and the additional loss are power fractions, entered in ppm.</p>
-          <p>With total loss S = T₁ + T₂ + T₃ + T₄ + A, round-trip time τ = n<sub>g</sub>L/c, and laser detuning Δf = f<sub>laser</sub> − f<sub>resonance</sub> in Hz, define D = S² + (4πΔfτ)². Circulating power / incident = 4T<sub>in</sub>/D; net coupled power / incident = 4T<sub>in</sub>(S − T<sub>in</sub>)/D; output power / incident = 4T<sub>in</sub>T<sub>out</sub>/D.</p>
-          <p>κ = S/τ is the <strong>energy</strong> decay rate; κ<sub>ext</sub> = T<sub>out</sub>/τ; FSR = 1/τ; finesse = 2π/S. Escape share is T<sub>out</sub>/S. Input and output ports are distinct because the input port also contains prompt reflection and interference.</p>
-          <p>Detuning is entered in MHz and held fixed throughout the transmission scan. Powers follow the Lorentzian factor 1/[1 + (2Δf/(κ/2π))²]; either sign gives the same power, and detuning by half the full linewidth κ/2π halves the resonant power. Detuning does not change decay rates, FSR, finesse, or escape share. This single-resonance approximation requires |Δf| ≪ FSR and does not include neighboring resonances.</p>
-          <p>Resonance wavelength sets f<sub>resonance</sub> = c/λ and quality factor Q = (c/λ)/(κ/2π). The laser frequency is f<sub>resonance</sub> + Δf. Wavelength does not change the plotted quantities when transmissions, group index, and detuning are fixed. No material dispersion or longitudinal mode number is inferred.</p>
-          <p id="quality-note">At 780 nm, Q = 1.54 × 10⁸.</p>
+          <p>Exact round-trip interference for continuous-wave input with perfect mode matching, one traveling direction, and frequency-independent mirror properties. Mirror power reflectivity is Rᵢ = 1 − Tᵢ; transmissions and additional loss A are entered in ppm. Light travels 1 → 2 → 3 → 4 → 1. Additional loss is lumped immediately before returning to the chosen input mirror.</p>
+          <p>Let τ = n<sub>g</sub>L/c, FSR = 1/τ, p = (1 − A)R₁R₂R₃R₄, ρ = √p, and φ = 2πΔf/FSR, with Δf = f<sub>laser</sub> − f<sub>resonance</sub> in Hz. Define D = (1 − ρ)² + 4ρ sin²(φ/2). Circulating power just after the input mirror / incident = T<sub>in</sub>/D. Detuning is entered in MHz and held fixed during the scan; the response repeats every FSR.</p>
+          <p>If b = (1 − A)∏<sub>i ≠ in</sub>Rᵢ, net coupled power / incident = T<sub>in</sub>(1 − b)/D. Each output receives circulating power × T<sub>out</sub> × the reflectivities of intervening mirrors. Input-port power is 1 minus net coupled power and includes prompt reflection and interference. Round-trip escape share is the fraction leaving the selected output in one pass from just after the input, divided by 1 − p.</p>
+          <p>The round-trip <strong>energy</strong> decay rate is κ = −ln(p)/τ. The selected mirror's additive logarithmic contribution is κ<sub>ext</sub> = −ln(R<sub>out</sub>)/τ; its ratio to κ is only approximately the escape share at small losses. These rates diverge at zero survival. Airy power FWHM = (2 FSR/π) asin[(1 − ρ)/(2√ρ)], when a half-maximum crossing exists; finesse = FSR/FWHM. κ/2π approximates this spectral linewidth only at high finesse.</p>
+          <p>At 100% transmission on every mirror, circulating power just after input and net coupled power both equal incident power. All light exits at the next mirror, independent of detuning. There is no resonant buildup; FWHM, finesse, and Q are undefined. At zero transmission and loss, an initially empty cavity cannot be excited.</p>
+          <p>Resonance wavelength sets f<sub>resonance</sub> = c/λ and ring-down quality factor Q = (c/λ)/(κ/2π). The laser frequency is f<sub>resonance</sub> + Δf. Wavelength does not change the plotted quantities when transmissions, group index, and detuning are fixed. No material dispersion or longitudinal mode number is inferred.</p>
+          <p id="quality-note">At 780 nm, ring-down Q = 1.53 × 10⁸.</p>
         </div></details>
       </div>
     </div>

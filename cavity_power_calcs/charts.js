@@ -26,8 +26,9 @@
     const plotWidth = width - margin.left - margin.right;
     const plotHeight = height - margin.top - margin.bottom;
     const isPower = kind === 'power';
-    const leftMax = isPower ? 105 : Math.max(8, niceCeiling(Math.max(...data.map(p => p.linewidth / 1e6)) * 1.12));
-    const rightMax = isPower ? Math.max(150, niceCeiling(Math.max(...data.map(p => p.circulating)) * 1.08)) : 0;
+    const finiteMax = values => Math.max(0, ...values.filter(Number.isFinite));
+    const leftMax = isPower ? 105 : Math.max(8, niceCeiling(finiteMax(data.flatMap(p => [p.linewidth / 1e6, p.externalLinewidth / 1e6])) * 1.12));
+    const rightMax = isPower ? Math.max(1, niceCeiling(finiteMax(data.map(p => p.circulating)) * 1.08)) : 0;
     const x = value => margin.left + (value - config.scanStart) / (config.scanEnd - config.scanStart) * plotWidth;
     const y = (value, right = false) => margin.top + plotHeight * (1 - value / (right ? rightMax : leftMax));
     const series = isPower ? [
@@ -75,13 +76,24 @@
     const curves = element('g', { 'clip-path': `url(#${svg.id}-clip)` });
     curves.append(element('line', { x1: x(current.scannedPpm), x2: x(current.scannedPpm), y1: margin.top, y2: y(0), stroke: '#91a5c1', 'stroke-width': 1, 'stroke-dasharray': '4 3' }));
     series.forEach(seriesItem => {
-      const path = data.map((point, index) => `${index ? 'L' : 'M'}${x(point.scannedPpm).toFixed(3)},${y(seriesItem.get(point), seriesItem.right).toFixed(3)}`).join(' ');
+      let connected = false;
+      const path = data.map(point => {
+        const value = seriesItem.get(point);
+        if (!Number.isFinite(value)) { connected = false; return ''; }
+        const command = connected ? 'L' : 'M';
+        connected = true;
+        return `${command}${x(point.scannedPpm).toFixed(3)},${y(value, seriesItem.right).toFixed(3)}`;
+      }).join(' ');
       const attrs = { d: path, fill: 'none', stroke: seriesItem.color, 'stroke-width': 1.7, 'stroke-linejoin': 'round' };
       if (seriesItem.dash) attrs['stroke-dasharray'] = seriesItem.dash;
       curves.append(element('path', attrs));
-      curves.append(element('circle', { cx: x(current.scannedPpm), cy: y(seriesItem.get(current), seriesItem.right), r: 3, fill: seriesItem.color, stroke: '#fff', 'stroke-width': 0.7 }));
+      if (Number.isFinite(seriesItem.get(current))) curves.append(element('circle', { cx: x(current.scannedPpm), cy: y(seriesItem.get(current), seriesItem.right), r: 3, fill: seriesItem.color, stroke: '#fff', 'stroke-width': 0.7 }));
     });
     fragment.append(curves);
+    if (!isPower && data.some(point => !Number.isFinite(point.linewidth) || !Number.isFinite(point.externalLinewidth))) {
+      const anyFinite = data.some(point => Number.isFinite(point.linewidth) || Number.isFinite(point.externalLinewidth));
+      fragment.append(element('text', { x: margin.left + plotWidth / 2, y: margin.top + (anyFinite ? 14 * scale : plotHeight / 2), 'text-anchor': 'middle', fill: '#597292', 'font-size': 9 * scale }, anyFinite ? 'Infinite decay rates are not plotted' : 'No finite decay rates: no round-trip survival'));
+    }
     svg.replaceChildren(fragment);
     svg.chartLayout = { margin, width, height, plotWidth, config };
   }

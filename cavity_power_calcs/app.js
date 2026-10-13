@@ -42,6 +42,8 @@
     for (let i = 0; i < 4; i++) byId(`mirror-label-${i}`).textContent = `Mirror ${i + 1}${i === input ? ' · input' : ''} (ppm)`;
   }
   function update(event) {
+    byId('power-tooltip').hidden = true;
+    byId('decay-tooltip').hidden = true;
     syncPorts();
     const next = readConfig();
     const errors = validate(next);
@@ -96,23 +98,23 @@
     byId('coupled-value').textContent = `${fixed(current.coupled * 100, 2)}%`;
     byId('leakage-title').textContent = `Mirror ${output} leakage per pass`;
     byId('leakage-value').textContent = `${fmt(current.output * 100, 4)}%`;
-    const escape = current.escapeShare === null ? 'undefined escape share' : `${fmt(current.escapeShare * 100, 1)}% escape share`;
+    const escape = current.escapeShare === null ? 'undefined escape share' : `${fmt(current.escapeShare * 100, 1)}% round-trip escape share`;
     byId('output-note').textContent = `${fixed(current.outputPower * 100, 2)}% of incident power exits here · ${escape}`;
     byId('circulating-value').textContent = `${fixed(current.circulating, 2)} ×`;
-    byId('response-note').textContent = current.input === 0 ? 'No input coupling' : `${fmt(current.resonanceResponse * 100, 2)}% of resonant power at this scan point`;
+    byId('circulating-note').textContent = `Just after mirror ${config.inputPort + 1} · per unit incident power`;
+    byId('response-note').textContent = current.input === 0 ? 'No input coupling' : current.roundTripAmplitude === 0 ? 'No resonant buildup' : `${fmt(current.resonanceResponse * 100, 2)}% of resonant power at this scan point`;
     byId('kappa-value').textContent = `${fixed(current.linewidth / 1e6, 3)} MHz`;
-    byId('kappa-note').textContent = `κ = ${fmt(current.kappa / 1e6)} × 10⁶ s⁻¹`;
+    byId('kappa-note').textContent = Number.isFinite(current.kappa) ? `κ = ${fmt(current.kappa / 1e6)} × 10⁶ s⁻¹` : 'No round-trip survival · logarithmic rate diverges';
     byId('external-value').textContent = `${fixed(current.externalLinewidth / 1e6, 3)} MHz`;
-    byId('external-note').textContent = `κext = ${fmt(current.kappaExt / 1e6)} × 10⁶ s⁻¹ · ${escape}`;
+    byId('external-note').textContent = Number.isFinite(current.kappaExt) ? `κext = ${fmt(current.kappaExt / 1e6)} × 10⁶ s⁻¹ · mirror log-loss contribution` : '100% transmission · logarithmic rate diverges';
     byId('fsr-value').textContent = frequency(current.fsr);
-    byId('finesse-note').textContent = `Finesse = ${fmt(current.finesse, 0)}`;
+    byId('finesse-note').textContent = current.finesse === null ? 'Finesse undefined · no half-maximum crossing' : `Finesse = ${fmt(current.finesse, 0)}`;
     byId('length-hint').textContent = `${fmt(config.length, 5)} m gives an FSR near ${frequency(current.fsr)}${config.groupIndex === 1 ? ' in air' : ` at nᵍ = ${fmt(config.groupIndex, 4)}`}.`;
     byId('wavelength-hint').textContent = `Resonance frequency ${frequency(current.frequency)}`;
-    byId('quality-note').textContent = `At ${fmt(config.wavelength, 4)} nm, Q = ${scientific(current.quality)}.`;
-    const maxLoss = Math.max(...data.map(point => point.total));
+    byId('quality-note').textContent = current.quality === null ? 'Q is undefined without round-trip survival.' : `At ${fmt(config.wavelength, 4)} nm, ring-down Q = ${scientific(current.quality)}.`;
     let warning = '';
-    if (maxLoss > 0.1) warning = 'The scan includes more than 10% total round-trip loss. This high-finesse approximation becomes less accurate at large losses.';
-    if (Math.abs(current.detuningHz) > 0.1 * current.fsr) warning += `${warning ? ' ' : ''}Detuning exceeds 10% of the FSR. The single-resonance approximation becomes less accurate far from resonance and does not include neighboring resonances.`;
+    if (current.airyLinewidth === null) warning = 'The response does not fall to half its peak between resonances, so Airy linewidth and finesse are undefined.';
+    if (current.roundTripAmplitude === 0) warning = 'No light survives a full round trip: there is no resonant buildup and powers are independent of detuning. Logarithmic decay rates can be infinite; infinite values are omitted from the plots.';
     if (current.total === 0) warning = 'All losses and transmissions are zero: an initially empty cavity cannot be excited. Finesse and Q are infinite; escape share is undefined.';
     byId('model-warning').hidden = !warning;
     byId('model-warning').textContent = warning;
