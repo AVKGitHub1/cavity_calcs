@@ -1,4 +1,4 @@
-/* High-finesse, on-resonance traveling-wave model. Power fractions, not amplitudes. */
+/* High-finesse, single-resonance traveling-wave model. Power fractions, not amplitudes. */
 (function (root) {
   'use strict';
   const C = 299792458;
@@ -7,7 +7,7 @@
     transmissions: Object.freeze([1000, 10000, 100, 100]),
     inputPort: 0, outputPort: 1, scanMirror: 0,
     scanStart: 0, scanEnd: 15000, tickSpacing: 1000,
-    length: 0.21413747, wavelength: 780, groupIndex: 1, otherLoss: 0,
+    length: 0.21413747, wavelength: 780, detuningMHz: 0, groupIndex: 1, otherLoss: 0,
   });
 
   function validate(config) {
@@ -25,6 +25,7 @@
     for (const [key, field, name, min, max] of [
       ['length', 'length', 'Round-trip length', 1e-9, 1e9],
       ['wavelength', 'wavelength', 'Wavelength', 1e-6, 1e9],
+      ['detuningMHz', 'detuning', 'Laser detuning (MHz)', -1e9, 1e9],
       ['groupIndex', 'group-index', 'Group index', 1e-6, 1e6],
       ['otherLoss', 'other-loss', 'Other round-trip loss', 0, 1e6],
       ['scanStart', 'scan-start', 'Scan start', 0, 1e6],
@@ -47,14 +48,18 @@
     const fsr = C / (config.groupIndex * config.length);
     const kappa = total * fsr;
     const kappaExt = output * fsr;
+    const detuningHz = config.detuningMHz * 1e6;
+    // Delta = 2 pi (f_laser - f_resonance); power denominator is S² + (2 Delta tau)².
+    const denominator = Math.hypot(total, 4 * Math.PI * detuningHz / fsr);
     // A perfectly closed, initially empty cavity cannot be excited.
-    const circulating = total === 0 ? 0 : 4 * (input / total) / total;
-    const coupled = total === 0 ? 0 : 4 * (input / total) * (other / total);
-    const outputPower = total === 0 ? 0 : 4 * (input / total) * (output / total);
+    const circulating = denominator === 0 ? 0 : 4 * (input / denominator) / denominator;
+    const coupled = denominator === 0 ? 0 : 4 * (input / denominator) * (other / denominator);
+    const outputPower = denominator === 0 ? 0 : 4 * (input / denominator) * (output / denominator);
+    const resonanceResponse = denominator === 0 ? 0 : (total / denominator) ** 2;
     const linewidth = kappa / (2 * Math.PI);
     const frequency = C / (config.wavelength * 1e-9);
     return {
-      scannedPpm, total, input, output, circulating, coupled, outputPower,
+      scannedPpm, total, input, output, circulating, coupled, outputPower, detuningHz, resonanceResponse,
       reflected: 1 - coupled, kappa, kappaExt, linewidth,
       externalLinewidth: kappaExt / (2 * Math.PI), fsr,
       finesse: total === 0 ? Infinity : 2 * Math.PI / total,
@@ -70,8 +75,10 @@
     for (let i = 1; i < samples; i++) points.add(config.scanStart + (config.scanEnd - config.scanStart) * i / samples);
     // Resolve narrow peaks near zero, even in scans spanning many decades.
     const fixedLoss = config.otherLoss + config.transmissions.reduce((sum, value, index) => sum + (index === config.scanMirror ? 0 : value), 0);
-    if (fixedLoss > 0) for (let i = -60; i <= 60; i++) {
-      const value = fixedLoss * Math.pow(10, i / 15);
+    const fsr = C / (config.groupIndex * config.length);
+    const peakScale = Math.hypot(fixedLoss, 4 * Math.PI * config.detuningMHz * 1e6 / fsr / PPM);
+    if (peakScale > 0) for (let i = -60; i <= 60; i++) {
+      const value = peakScale * Math.pow(10, i / 15);
       if (value > config.scanStart && value < config.scanEnd) points.add(value);
     }
     return [...points].sort((a, b) => a - b).map(value => calculate(config, value));

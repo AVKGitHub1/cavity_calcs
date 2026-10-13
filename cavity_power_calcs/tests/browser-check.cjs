@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
+const { DEFAULTS, calculate } = require('../cavity-model.js');
 
 (async () => {
   const browser = await chromium.launch({ headless: true, ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: 'chrome' }) });
@@ -23,6 +24,47 @@ const { pathToFileURL } = require('node:url');
     const outputDir = path.resolve(__dirname, '../../.cache/cavity-preview');
     fs.mkdirSync(outputDir, { recursive: true });
     await page.screenshot({ path: path.join(outputDir, 'desktop.png'), fullPage: true });
+
+    // Detuning updates powers and full curves, preserving intrinsic cavity rates.
+    const curves = id => page.locator(`#${id} path`).evaluateAll(nodes => nodes.map(node => node.getAttribute('d')));
+    // Compare geometry rather than vertices: detuning changes the adaptive scan samples.
+    const decayGeometry = () => page.locator('#decay-chart path').evaluateAll(nodes => nodes.map(node =>
+      [0, 0.25, 0.5, 0.75, 1].map(fraction => {
+        const point = node.getPointAtLength(node.getTotalLength() * fraction);
+        return [point.x.toFixed(2), point.y.toFixed(2)];
+      })));
+    const resonantPowerCurves = await curves('power-chart');
+    const resonantDecayGeometry = await decayGeometry();
+    const halfLinewidthMHz = calculate(DEFAULTS).linewidth / 2e6;
+    assert.equal(await page.locator('#detuning').inputValue(), '0');
+    await page.locator('#detuning').fill(String(halfLinewidthMHz));
+    assert.equal(await text('circulating-value'), '15.94 ×');
+    assert.equal(await text('coupled-value'), '16.26%');
+    assert.match(await text('output-note'), /^15\.94%/);
+    assert.equal(await text('response-note'), '50% of resonant power at this scan point');
+    assert.match(await text('subtitle'), /detuned/);
+    assert.match(await text('power-context'), /Δf = \+1\.248 MHz/);
+    assert.equal(await text('kappa-value'), '2.496 MHz');
+    const detunedPowerCurves = await curves('power-chart');
+    assert.notDeepEqual(detunedPowerCurves, resonantPowerCurves);
+    assert.deepEqual(await decayGeometry(), resonantDecayGeometry);
+    await page.screenshot({ path: path.join(outputDir, 'detuned.png'), fullPage: true });
+    await page.locator('#detuning').fill(String(-halfLinewidthMHz));
+    assert.equal(await text('circulating-value'), '15.94 ×');
+    assert.match(await text('power-context'), /Δf = -1\.248 MHz/);
+    assert.deepEqual(await curves('power-chart'), detunedPowerCurves);
+    await page.locator('#detuning').fill('');
+    assert.equal(await page.locator('#detuning').getAttribute('aria-invalid'), 'true');
+    assert.equal(await page.locator('#form-error').isVisible(), true);
+    assert.equal(await page.locator('#scan-point').isDisabled(), true);
+    assert.equal(await text('circulating-value'), '15.94 ×');
+    await page.locator('#detuning').fill('200');
+    assert.match(await text('model-warning'), /Detuning exceeds 10% of the FSR/);
+    await page.locator('#detuning').fill('0');
+    assert.equal(await page.locator('#form-error').isVisible(), false);
+    assert.equal(await page.locator('#model-warning').isVisible(), false);
+    assert.equal(await text('circulating-value'), '31.89 ×');
+    assert.deepEqual(await curves('power-chart'), resonantPowerCurves);
 
     // The keyboard-accessible slider moves both plot markers and the selected mirror input.
     await page.locator('#scan-point').focus();
@@ -84,6 +126,7 @@ const { pathToFileURL } = require('node:url');
 
     await page.reload();
     await page.waitForSelector('#power-chart path');
+    await page.locator('#detuning').fill('-1.25');
     for (const width of [1440, 889, 700, 390, 320]) {
       await page.setViewportSize({ width, height: 924 });
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -91,7 +134,7 @@ const { pathToFileURL } = require('node:url');
       if (width === 390 || width === 1440) await page.screenshot({ path: path.join(outputDir, `${width === 390 ? 'mobile' : 'wide'}.png`), fullPage: true });
     }
     assert.deepEqual(errors, []);
-    console.log('Browser checks passed: reference values, slider, ports, scanning, wavelength, validation, range handling, tooltips, closed cavity, and five viewport sizes.');
+    console.log('Browser checks passed: reference values, signed detuning, power curves, slider, ports, scanning, wavelength, validation, range handling, tooltips, closed cavity, and five viewport sizes.');
     console.log(`Screenshots: ${outputDir}`);
   } finally {
     await browser.close();

@@ -18,7 +18,7 @@
   }
   function frequency(value) {
     for (const [scale, suffix] of [[1e12, 'THz'], [1e9, 'GHz'], [1e6, 'MHz'], [1e3, 'kHz'], [1, 'Hz']]) {
-      if (value >= scale) return `${fmt(value / scale, 3)} ${suffix}`;
+      if (Math.abs(value) >= scale) return `${fmt(value / scale, 3)} ${suffix}`;
     }
     return `${scientific(value)} Hz`;
   }
@@ -28,7 +28,7 @@
       transmissions: [0, 1, 2, 3].map(i => readNumber(`mirror-${i}`)),
       inputPort: Number(byId('input-port').value), outputPort: Number(byId('output-port').value), scanMirror: Number(byId('scan-mirror').value),
       scanStart: readNumber('scan-start'), scanEnd: readNumber('scan-end'), tickSpacing: readNumber('tick-spacing'),
-      length: readNumber('length'), wavelength: readNumber('wavelength'), groupIndex: readNumber('group-index'), otherLoss: readNumber('other-loss'),
+      length: readNumber('length'), wavelength: readNumber('wavelength'), detuningMHz: readNumber('detuning'), groupIndex: readNumber('group-index'), otherLoss: readNumber('other-loss'),
     };
   }
   function syncPorts() {
@@ -85,8 +85,10 @@
     const current = calculate(config);
     const scanMirror = config.scanMirror + 1;
     const output = config.outputPort + 1;
-    byId('subtitle').textContent = `Four-mirror, traveling-wave cavity · resonant continuous-wave input through mirror ${config.inputPort + 1}`;
-    byId('power-context').textContent = `Mirror ${scanMirror} scanned · output at mirror ${output}`;
+    const detuning = `Δf = ${current.detuningHz > 0 ? '+' : ''}${frequency(current.detuningHz)}`;
+    const drive = current.detuningHz === 0 ? 'resonant' : `detuned (${detuning})`;
+    byId('subtitle').textContent = `Four-mirror, traveling-wave cavity · ${drive} continuous-wave input through mirror ${config.inputPort + 1}`;
+    byId('power-context').textContent = `Mirror ${scanMirror} scanned · output at mirror ${output} · ${detuning}`;
     byId('decay-context').textContent = `Mirror ${scanMirror} scanned · κext at mirror ${output}`;
     byId('decay-legend').textContent = `Mirror ${output} κext / 2π`;
     byId('scan-readout').textContent = `${fmt(current.scannedPpm, 3)} ppm`;
@@ -97,6 +99,7 @@
     const escape = current.escapeShare === null ? 'undefined escape share' : `${fmt(current.escapeShare * 100, 1)}% escape share`;
     byId('output-note').textContent = `${fixed(current.outputPower * 100, 2)}% of incident power exits here · ${escape}`;
     byId('circulating-value').textContent = `${fixed(current.circulating, 2)} ×`;
+    byId('response-note').textContent = current.input === 0 ? 'No input coupling' : `${fmt(current.resonanceResponse * 100, 2)}% of resonant power at this scan point`;
     byId('kappa-value').textContent = `${fixed(current.linewidth / 1e6, 3)} MHz`;
     byId('kappa-note').textContent = `κ = ${fmt(current.kappa / 1e6)} × 10⁶ s⁻¹`;
     byId('external-value').textContent = `${fixed(current.externalLinewidth / 1e6, 3)} MHz`;
@@ -104,11 +107,12 @@
     byId('fsr-value').textContent = frequency(current.fsr);
     byId('finesse-note').textContent = `Finesse = ${fmt(current.finesse, 0)}`;
     byId('length-hint').textContent = `${fmt(config.length, 5)} m gives an FSR near ${frequency(current.fsr)}${config.groupIndex === 1 ? ' in air' : ` at nᵍ = ${fmt(config.groupIndex, 4)}`}.`;
-    byId('wavelength-hint').textContent = `Resonant drive · optical frequency ${frequency(current.frequency)}`;
+    byId('wavelength-hint').textContent = `Resonance frequency ${frequency(current.frequency)}`;
     byId('quality-note').textContent = `At ${fmt(config.wavelength, 4)} nm, Q = ${scientific(current.quality)}.`;
     const maxLoss = Math.max(...data.map(point => point.total));
     let warning = '';
     if (maxLoss > 0.1) warning = 'The scan includes more than 10% total round-trip loss. This high-finesse approximation becomes less accurate at large losses.';
+    if (Math.abs(current.detuningHz) > 0.1 * current.fsr) warning += `${warning ? ' ' : ''}Detuning exceeds 10% of the FSR. The single-resonance approximation becomes less accurate far from resonance and does not include neighboring resonances.`;
     if (current.total === 0) warning = 'All losses and transmissions are zero: an initially empty cavity cannot be excited. Finesse and Q are infinite; escape share is undefined.';
     byId('model-warning').hidden = !warning;
     byId('model-warning').textContent = warning;

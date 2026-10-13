@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f4f7fb">
-  <meta name="description" content="Explore the resonant power, decay rates, and finesse of a four-mirror traveling-wave ring cavity.">
+  <meta name="description" content="Explore power, laser detuning, decay rates, and finesse of a four-mirror traveling-wave ring cavity.">
   <title>Ring Cavity Explorer</title>
   <link rel="stylesheet" href="styles.css">
   <script src="cavity-model.js" defer></script>
@@ -47,7 +47,8 @@
             <legend>Cavity properties</legend>
             <div class="field-grid">
               <label class="full-width">Round-trip geometric length (m)<input id="length" name="length" type="number" min="0.000000001" max="1000000000" step="any" value="0.21413747" aria-describedby="length-hint" required><small id="length-hint">0.21414 m gives an FSR near 1.4 GHz in air.</small></label>
-              <label class="full-width">Wavelength (nm)<input id="wavelength" name="wavelength" type="number" min="0.000001" max="1000000000" step="any" value="780" aria-describedby="wavelength-hint" required><small id="wavelength-hint">Resonant drive · optical frequency 384.35 THz</small></label>
+              <label class="full-width">Resonance wavelength (nm)<input id="wavelength" name="wavelength" type="number" min="0.000001" max="1000000000" step="any" value="780" aria-describedby="wavelength-hint" required><small id="wavelength-hint">Resonance frequency 384.35 THz</small></label>
+              <label class="full-width">Laser detuning Δf (MHz)<input id="detuning" name="detuning" type="number" min="-1000000000" max="1000000000" step="any" value="0" aria-describedby="detuning-hint" required><small id="detuning-hint">Δf = f<sub>laser</sub> − f<sub>resonance</sub>. Positive is above resonance; 0 is on resonance.</small></label>
               <label>Group index<input id="group-index" name="group-index" type="number" min="0.000001" max="1000000" step="any" value="1" required></label>
               <label>Other round-trip loss (ppm)<input id="other-loss" name="other-loss" type="number" min="0" max="1000000" step="any" value="0" required></label>
             </div>
@@ -78,7 +79,7 @@
         <section class="metrics" aria-label="Results at the current scan point" aria-live="polite" aria-atomic="true">
           <article class="panel metric"><h3>Net incident power coupled in</h3><p class="metric-value blue-text" id="coupled-value">32.53%</p><p class="metric-note">Other ports + internal loss</p></article>
           <article class="panel metric"><h3 id="leakage-title">Mirror 2 leakage per pass</h3><p class="metric-value green-text" id="leakage-value">1%</p><p class="metric-note">Fraction of circulating power</p><p class="metric-note" id="output-note">31.89% of incident power exits here · 89.3% escape share</p></article>
-          <article class="panel metric"><h3>Circulating power</h3><p class="metric-value orange-text" id="circulating-value">31.89 ×</p><p class="metric-note">Per 1 unit of incident power</p></article>
+          <article class="panel metric"><h3>Circulating power</h3><p class="metric-value orange-text" id="circulating-value">31.89 ×</p><p class="metric-note">Per 1 unit of incident power</p><p class="metric-note" id="response-note">100% of resonant power at this scan point</p></article>
           <article class="panel metric"><h3>κ / 2π · total</h3><p class="metric-value" id="kappa-value">2.496 MHz</p><p class="metric-note" id="kappa-note">κ = 15.68 × 10⁶ s⁻¹</p></article>
           <article class="panel metric"><h3>κ<sub>ext</sub> / 2π</h3><p class="metric-value" id="external-value">2.228 MHz</p><p class="metric-note" id="external-note">κext = 14 × 10⁶ s⁻¹ · 89.3% escape share</p></article>
           <article class="panel metric"><h3>FSR · finesse</h3><p class="metric-value" id="fsr-value">1.4 GHz</p><p class="metric-note" id="finesse-note">Finesse = 561</p></article>
@@ -86,10 +87,11 @@
 
         <p id="model-warning" class="notice" role="status" hidden></p>
         <details class="model-details"><summary>About this model</summary><div>
-          <p>Resonant continuous-wave drive, perfect mode matching, and a single traveling-wave mode. This is the high-finesse (small round-trip loss) model used in the reference screenshot. All transmissions and the additional loss are power fractions, entered in ppm.</p>
-          <p>With total loss S = T₁ + T₂ + T₃ + T₄ + A and round-trip time τ = n<sub>g</sub>L/c: circulating power / incident = 4T<sub>in</sub>/S²; net coupled power / incident = 4T<sub>in</sub>(S − T<sub>in</sub>)/S²; output power / incident = 4T<sub>in</sub>T<sub>out</sub>/S².</p>
+          <p>Continuous-wave drive, perfect mode matching, and a single traveling-wave mode. This is a high-finesse (small round-trip loss) model near one cavity resonance. All transmissions and the additional loss are power fractions, entered in ppm.</p>
+          <p>With total loss S = T₁ + T₂ + T₃ + T₄ + A, round-trip time τ = n<sub>g</sub>L/c, and laser detuning Δf = f<sub>laser</sub> − f<sub>resonance</sub> in Hz, define D = S² + (4πΔfτ)². Circulating power / incident = 4T<sub>in</sub>/D; net coupled power / incident = 4T<sub>in</sub>(S − T<sub>in</sub>)/D; output power / incident = 4T<sub>in</sub>T<sub>out</sub>/D.</p>
           <p>κ = S/τ is the <strong>energy</strong> decay rate; κ<sub>ext</sub> = T<sub>out</sub>/τ; FSR = 1/τ; finesse = 2π/S. Escape share is T<sub>out</sub>/S. Input and output ports are distinct because the input port also contains prompt reflection and interference.</p>
-          <p>The drive is assumed to stay on resonance. Wavelength sets the optical frequency c/λ and quality factor Q = (c/λ)/(κ/2π); the plotted quantities do not depend on wavelength when the specified mirror transmissions and group index are fixed. No material dispersion is inferred.</p>
+          <p>Detuning is entered in MHz and held fixed throughout the transmission scan. Powers follow the Lorentzian factor 1/[1 + (2Δf/(κ/2π))²]; either sign gives the same power, and detuning by half the full linewidth κ/2π halves the resonant power. Detuning does not change decay rates, FSR, finesse, or escape share. This single-resonance approximation requires |Δf| ≪ FSR and does not include neighboring resonances.</p>
+          <p>Resonance wavelength sets f<sub>resonance</sub> = c/λ and quality factor Q = (c/λ)/(κ/2π). The laser frequency is f<sub>resonance</sub> + Δf. Wavelength does not change the plotted quantities when transmissions, group index, and detuning are fixed. No material dispersion or longitudinal mode number is inferred.</p>
           <p id="quality-note">At 780 nm, Q = 1.54 × 10⁸.</p>
         </div></details>
       </div>
