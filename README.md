@@ -8,7 +8,11 @@ Repository for random cavity calculations.
 
 [`cavity_power_calcs/index.html`](cavity_power_calcs/index.html) is a standalone
 website for exploring power, laser detuning, and decay rates in a four-mirror ring
-cavity. Open it directly in a browser, or serve it locally with:
+cavity. It is published with GitHub Pages at
+<https://abhishekkarve.com/cavity_calcs/cavity_power_calc/> by
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to
+`main` that touches `cavity_power_calcs/`. Open it directly in a browser, or serve
+it locally with:
 
 ```bash
 python -m http.server 8000 --bind 127.0.0.1 --directory cavity_power_calcs

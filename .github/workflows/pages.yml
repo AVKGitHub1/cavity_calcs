@@ -1,0 +1,73 @@
+name: Deploy Ring Cavity Explorer to GitHub Pages
+
+# Publishes cavity_power_calcs/ at <pages-site>/cavity_calcs/cavity_power_calc/.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cavity_power_calcs/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Run model tests
+        working-directory: cavity_power_calcs
+        run: npm test
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site/cavity_power_calc
+          rsync -a \
+            --exclude tests/ \
+            --exclude 'package*.json' \
+            --exclude README.md \
+            cavity_power_calcs/ _site/cavity_power_calc/
+          # Send the bare project URL to the calculator.
+          cat > _site/index.html <<'EOF'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>Cavity Calcs</title>
+            <meta http-equiv="refresh" content="0; url=cavity_power_calc/">
+            <link rel="canonical" href="cavity_power_calc/">
+          </head>
+          <body>
+            <p><a href="cavity_power_calc/">Ring Cavity Explorer</a></p>
+          </body>
+          </html>
+          EOF
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}cavity_power_calc/
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
